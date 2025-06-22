@@ -6,110 +6,7 @@ const Hand = @import("card.zig").Hand;
 const Player = @import("player.zig").Player;
 const BettingStrategy = @import("player.zig").BettingStrategy;
 const Deck = @import("deck.zig").Deck;
-
-const Action = enum {
-    hit,
-    stand,
-    double_down,
-    split,
-
-    pub fn fromChar(c: u8) ?Action {
-        return switch (c) {
-            'H' => .hit,
-            'S' => .stand,
-            'D' => .double_down,
-            'P' => .split,
-            else => null,
-        };
-    }
-};
-
-const Strategy = struct {
-    lookup: std.HashMap([2]u8, Action, KeyContext, std.hash_map.default_max_load_percentage),
-    allocator: std.mem.Allocator,
-
-    const KeyContext = struct {
-        pub fn hash(self: @This(), key: [2]u8) u64 {
-            _ = self;
-            return std.hash_map.hashString(&key);
-        }
-        pub fn eql(self: @This(), a: [2]u8, b: [2]u8) bool {
-            _ = self;
-            return std.mem.eql(u8, &a, &b);
-        }
-    };
-
-    pub fn init(allocator: std.mem.Allocator) Strategy {
-        return Strategy{
-            .lookup = std.HashMap([2]u8, Action, KeyContext, std.hash_map.default_max_load_percentage).init(allocator),
-            .allocator = allocator,
-        };
-    }
-
-    pub fn deinit(self: *Strategy) void {
-        self.lookup.deinit();
-    }
-
-    pub fn loadFromFile(self: *Strategy, file_path: []const u8) !void {
-        const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
-            print("Error opening strategy file: {}\n", .{err});
-            return err;
-        };
-        defer file.close();
-
-        const file_size = try file.getEndPos();
-        const contents = try self.allocator.alloc(u8, file_size);
-        defer self.allocator.free(contents);
-        _ = try file.readAll(contents);
-
-        var lines = std.mem.splitScalar(u8, contents, '\n');
-
-        // Skip header line
-        _ = lines.next();
-
-        while (lines.next()) |line| {
-            if (line.len == 0) continue;
-
-            var fields = std.mem.splitScalar(u8, line, ',');
-            const player_hand_str = fields.next() orelse continue;
-
-            // Parse player hand
-            var player_hand: u8 = 0;
-            if (std.mem.eql(u8, player_hand_str, "AA")) {
-                player_hand = 1; // Special case for pair of aces
-            } else if (player_hand_str.len >= 2 and player_hand_str[0] == 'A') {
-                // Soft hands like A2, A3, etc.
-                player_hand = 100 + (player_hand_str[1] - '0'); // 102 for A2, 103 for A3, etc.
-            } else if (player_hand_str.len >= 2 and player_hand_str[0] == player_hand_str[1]) {
-                // Pairs like 22, 33, etc.
-                player_hand = 200 + (player_hand_str[0] - '0'); // 202 for 22, 203 for 33, etc.
-            } else {
-                // Hard totals
-                player_hand = std.fmt.parseInt(u8, player_hand_str, 10) catch continue;
-            }
-
-            // Parse dealer up cards and actions
-            var dealer_card: u8 = 2;
-            while (fields.next()) |action_str| {
-                if (action_str.len == 0) continue;
-
-                if (Action.fromChar(action_str[0])) |action| {
-                    const key = [2]u8{ player_hand, dealer_card };
-                    try self.lookup.put(key, action);
-                }
-
-                dealer_card += 1;
-                if (dealer_card == 11) dealer_card = 1; // 10 -> Ace
-                if (dealer_card > 1 and dealer_card < 2) break;
-            }
-        }
-    }
-
-    pub fn getAction(self: *Strategy, player_hand_value: u8, dealer_up_card: u8) Action {
-        const key = [2]u8{ player_hand_value, dealer_up_card };
-        return self.lookup.get(key) orelse .stand; // Default to stand if not found
-    }
-};
+const Strategy = @import("strategy.zig").Strategy;
 
 
 const GameConfig = struct {
@@ -227,25 +124,27 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         }
         player.bankroll -= player.bet;
 
-        if (deck.dealCard()) |card1| {
-            try player_hand.cards.append(card1);
-        }
-        if (deck.dealCard()) |card2| {
-            try player_hand.cards.append(card2);
-        }
-
         var dealer_hand = Hand.init(allocator);
         defer dealer_hand.deinit();
 
+        // Deal cards in proper alternating order: player, dealer, player, dealer
+        if (deck.dealCard()) |card1| {
+            try player_hand.cards.append(card1);
+        }
         if (deck.dealCard()) |dealer_card1| {
             try dealer_hand.cards.append(dealer_card1);
+        }
+        if (deck.dealCard()) |card2| {
+            try player_hand.cards.append(card2);
         }
         if (deck.dealCard()) |dealer_card2| {
             try dealer_hand.cards.append(dealer_card2);
         }
 
         // Player plays their hand using loaded strategy
-        while (player_hand.getValue() < 21) {
+        var player_done = false;
+        var doubled_down = false;
+        while (player_hand.getValue() < 21 and !player_done) {
             const player_strategy_key = player_hand.getStrategyKey();
             var dealer_up_card = dealer_hand.cards.items[0].rank;
             if (dealer_up_card > 10) dealer_up_card = 10; // Face cards = 10
@@ -258,13 +157,20 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
                         try player_hand.cards.append(hit_card);
                     } else break;
                 },
-                .stand => break,
+                .stand => {
+                    player_done = true;
+                },
                 .double_down => {
-                    // For simplicity, treat double down as hit once then stand
+                    // Double down: double the bet, hit once, then stop
+                    if (player.bankroll >= player.bet) {
+                        player.bankroll -= player.bet;
+                        player.bet *= 2;
+                        doubled_down = true;
+                    }
                     if (deck.dealCard()) |hit_card| {
                         try player_hand.cards.append(hit_card);
                     }
-                    break;
+                    player_done = true;
                 },
                 .split => {
                     // For simplicity, treat split as hit (splitting not implemented yet)
@@ -290,8 +196,13 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         const dealer_blackjack = dealer_hand.isBlackjack();
 
         var result: []const u8 = "UNKNOWN";
-        const original_bet = player.bet;
+        const current_bet = player.bet;
         var winnings: f64 = 0;
+
+        // Reset bet for betting strategy tracking (will be updated in win/loss methods)
+        if (doubled_down) {
+            player.bet = player.bet / 2; // Reset to original bet amount for strategy tracking
+        }
 
         if (player_hand.isBust()) {
             result = "LOSS";
@@ -299,37 +210,40 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         } else if (dealer_hand.isBust()) {
             result = "WIN";
             if (player_blackjack) {
-                winnings = player.bet * 2.5;
+                winnings = current_bet * 2.5;
             } else {
-                winnings = player.bet * 2;
+                winnings = current_bet * 2;
             }
             player.updateBetAfterWin();
         } else if (player_blackjack and dealer_blackjack) {
             result = "PUSH";
+            winnings = current_bet * 2; // Assume even money on average.
             player.recordPush();
         } else if (player_blackjack) {
             result = "WIN";
-            winnings = player.bet * 2.5;
+            winnings = current_bet * 2.5;
             player.updateBetAfterWin();
         } else if (dealer_blackjack) {
             result = "LOSS";
             player.resetBetAfterLoss();
         } else if (player_value > dealer_value) {
             result = "WIN";
-            winnings = player.bet * 2.0;
+            winnings = current_bet * 2.0;
             player.updateBetAfterWin();
         } else if (player_value < dealer_value) {
             result = "LOSS";
             player.resetBetAfterLoss();
         } else {
             result = "PUSH";
+            winnings = current_bet; // Return bet
             player.recordPush();
         }
 
         player.bankroll += winnings;
         hands_played += 1;
 
-        print("Hand {}: {s} - Bet: ${d:.2}, Winnings: ${d:.2}, New Bet: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, result, original_bet, winnings, player.bet, player.bankroll, player_value, dealer_value });
+        const double_indicator = if (doubled_down) " (DOUBLE)" else "";
+        print("Hand {}: {s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, New Bet: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, result, double_indicator, current_bet, winnings, player.bet, player.bankroll, player_value, dealer_value });
 
         if (player.bankroll <= 0) {
             print("Player bankrupt after {} hands\n", .{hands_played});

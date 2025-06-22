@@ -1,0 +1,23 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "zig build", // A descriptive name for the task
+            "type": "shell",
+            "command": "zig",      // The command to execute (the zig compiler)
+            "args": [
+                "build",           // Use the build command
+                "install",         // Install the build artifacts
+                "--summary",       // Include build summary
+                "all"              // Build all targets
+            ],
+            "group": {
+                "kind": "build",
+                "isDefault": true  // Set this as the default build task
+            },
+            "presentation": {
+                "reveal": "always" // Show the terminal during the build process
+            }
+        }
+    ]
+}
