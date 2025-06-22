@@ -1,6 +1,12 @@
 const std = @import("std");
 const print = std.debug.print;
 
+const Card = @import("card.zig").Card;
+const Hand = @import("card.zig").Hand;
+const Player = @import("player.zig").Player;
+const BettingStrategy = @import("player.zig").BettingStrategy;
+const Deck = @import("deck.zig").Deck;
+
 const Action = enum {
     hit,
     stand,
@@ -12,7 +18,7 @@ const Action = enum {
             'H' => .hit,
             'S' => .stand,
             'D' => .double_down,
-            'P' => .split, // SP in CSV becomes P
+            'P' => .split,
             else => null,
         };
     }
@@ -105,190 +111,6 @@ const Strategy = struct {
     }
 };
 
-const Card = struct {
-    suit: u8,
-    rank: u8,
-
-    pub fn getValue(self: Card) u8 {
-        if (self.rank == 1) return 11;
-        if (self.rank > 10) return 10;
-        return self.rank;
-    }
-
-    pub fn isAce(self: Card) bool {
-        return self.rank == 1;
-    }
-};
-
-const Hand = struct {
-    cards: std.ArrayList(Card),
-    is_split: bool = false,
-    is_doubled: bool = false,
-
-    pub fn init(allocator: std.mem.Allocator) Hand {
-        return Hand{
-            .cards = std.ArrayList(Card).init(allocator),
-        };
-    }
-
-    pub fn deinit(self: *Hand) void {
-        self.cards.deinit();
-    }
-
-    pub fn getValue(self: Hand) u8 {
-        var value: u8 = 0;
-        var aces: u8 = 0;
-
-        for (self.cards.items) |card| {
-            if (card.isAce()) {
-                aces += 1;
-                value += 11;
-            } else {
-                value += card.getValue();
-            }
-        }
-
-        while (value > 21 and aces > 0) {
-            value -= 10;
-            aces -= 1;
-        }
-
-        return value;
-    }
-
-    pub fn isBlackjack(self: Hand) bool {
-        return self.cards.items.len == 2 and self.getValue() == 21;
-    }
-
-    pub fn isBust(self: Hand) bool {
-        return self.getValue() > 21;
-    }
-};
-
-const BettingStrategy = enum {
-    flat,
-    increase_after_win,
-    high_increase_after_win,
-};
-
-const Player = struct {
-    bankroll: f64,
-    bet: f64,
-    wins_streak: u32 = 0,
-    wins: u32 = 0,
-    losses: u32 = 0,
-    pushes: u32 = 0,
-    betting_strategy: BettingStrategy,
-    table_minimum: f64,
-
-    pub fn init(starting_bankroll: f64, table_minimum: f64, betting_strategy: BettingStrategy) Player {
-        return Player{
-            .bankroll = starting_bankroll,
-            .bet = table_minimum,
-            .betting_strategy = betting_strategy,
-            .table_minimum = table_minimum,
-        };
-    }
-
-    pub fn updateBetAfterWin(self: *Player) void {
-        self.wins_streak += 1;
-        self.wins += 1;
-
-        switch (self.betting_strategy) {
-            .flat => {},
-            .increase_after_win => {
-                self.bet += self.table_minimum;
-            },
-            .high_increase_after_win => {
-                if (self.wins_streak <= 2) {
-                    self.bet *= 2;
-                } else {
-                    const rounded_increase = @ceil(self.bet / 2.0);
-                    self.bet += rounded_increase;
-                }
-            },
-        }
-    }
-
-    pub fn resetBetAfterLoss(self: *Player) void {
-        self.wins_streak = 0;
-        self.bet = self.table_minimum;
-        self.losses += 1;
-    }
-
-    pub fn recordPush(self: *Player) void {
-        self.wins_streak = 0;
-        self.bet = self.table_minimum;
-        self.pushes += 1;
-    }
-};
-
-const Deck = struct {
-    cards: std.ArrayList(Card),
-    num_decks: u8 = 6,
-    shuffle_point: usize,
-    rng: std.Random.DefaultPrng,
-
-    pub fn init(allocator: std.mem.Allocator, num_decks: u8) !Deck {
-        var deck = Deck{
-            .num_decks = num_decks,
-            .cards = std.ArrayList(Card).init(allocator),
-            .shuffle_point = 0,
-            .rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp())),
-        };
-
-        // try deck.createDecks(num_decks);
-        // Creates and shuffles the deck immediately.
-        try deck.shuffle();
-
-        return deck;
-    }
-
-    pub fn deinit(self: *Deck) void {
-        self.cards.deinit();
-    }
-
-    fn createDecks(self: *Deck, num_decks: u8) !void {
-        for (0..num_decks) |_| {
-            for (1..5) |suit| {
-                for (1..14) |rank| {
-                    try self.cards.append(Card{
-                        .suit = @intCast(suit),
-                        .rank = @intCast(rank),
-                    });
-                }
-            }
-        }
-    }
-
-    pub fn shuffle(self: *Deck) !void {
-        self.cards.clearAndFree();
-        try self.createDecks(self.num_decks);
-        const total_cards = self.cards.items.len;
-
-        // Calculate shuffle point: shuffle when 15-20% of cards remain
-        const min_remaining = total_cards * 15 / 100; // 15% remaining
-        const max_remaining = total_cards * 20 / 100; // 20% remaining
-        const range = max_remaining - min_remaining;
-        self.shuffle_point = min_remaining + self.rng.random().uintLessThan(usize, range + 1);
-
-        for (0..total_cards) |i| {
-            const j = self.rng.random().uintLessThan(usize, total_cards);
-            const temp = self.cards.items[i];
-            self.cards.items[i] = self.cards.items[j];
-            self.cards.items[j] = temp;
-        }
-    }
-
-    pub fn needsShuffle(self: Deck) bool {
-        return self.cards.items.len <= self.shuffle_point;
-    }
-
-    pub fn dealCard(self: *Deck) ?Card {
-        if (self.cards.items.len == 0) return null;
-        return self.cards.pop();
-    }
-};
 
 const GameConfig = struct {
     num_hands: u32,
@@ -424,12 +246,11 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
 
         // Player plays their hand using loaded strategy
         while (player_hand.getValue() < 21) {
-            const player_value = player_hand.getValue();
+            const player_strategy_key = player_hand.getStrategyKey();
             var dealer_up_card = dealer_hand.cards.items[0].rank;
             if (dealer_up_card > 10) dealer_up_card = 10; // Face cards = 10
-            if (dealer_up_card == 1) dealer_up_card = 1; // Ace = 1 for lookup
 
-            const action = strategy.getAction(player_value, dealer_up_card);
+            const action = strategy.getAction(player_strategy_key, dealer_up_card);
 
             switch (action) {
                 .hit => {
@@ -456,7 +277,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
 
         // Dealer plays only if player didn't bust
         if (!player_hand.isBust()) {
-            while (dealer_hand.getValue() < 17 or (dealer_hand.getValue() == 17 and dealer_hand.cards.items.len >= 2 and dealer_hand.cards.items[0].isAce())) {
+            while (dealer_hand.getValue() < 17 or (dealer_hand.getValue() == 17 and dealer_hand.isSoft())) {
                 if (deck.dealCard()) |card| {
                     try dealer_hand.cards.append(card);
                 } else break;
