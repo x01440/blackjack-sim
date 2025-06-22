@@ -26,10 +26,10 @@ The number of players in each hand may vary. The game will start off with the "p
 ## Betting strategies
 
 ### Increase after win
-This strategy is to increase the bet by 50% of the table minimum after a win. If the table minimum is odd, then round up to the nearest $5 of 50% of the table minimum. When a streak of wins is over, the bet goes back to table minimum.
+This strategy is to increase the bet by the table minimum after a win. When a streak of wins is over, the bet goes back to table minimum.
 
 ### High increase after win
-This strategy is to double the bet after the first two wins, then increase the bet by the table minimum for each win therafter. When a streak of wins is over, the bet goes back to table minimum.
+This strategy is to double the bet after the first two wins, then increase the bet by 50% of the bet each win therafter. When a streak of wins is over, the bet goes back to table minimum.
 
 ## Game rules
 

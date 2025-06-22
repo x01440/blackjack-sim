@@ -1,6 +1,110 @@
 const std = @import("std");
 const print = std.debug.print;
 
+const Action = enum {
+    hit,
+    stand,
+    double_down,
+    split,
+
+    pub fn fromChar(c: u8) ?Action {
+        return switch (c) {
+            'H' => .hit,
+            'S' => .stand,
+            'D' => .double_down,
+            'P' => .split, // SP in CSV becomes P
+            else => null,
+        };
+    }
+};
+
+const Strategy = struct {
+    lookup: std.HashMap([2]u8, Action, KeyContext, std.hash_map.default_max_load_percentage),
+    allocator: std.mem.Allocator,
+
+    const KeyContext = struct {
+        pub fn hash(self: @This(), key: [2]u8) u64 {
+            _ = self;
+            return std.hash_map.hashString(&key);
+        }
+        pub fn eql(self: @This(), a: [2]u8, b: [2]u8) bool {
+            _ = self;
+            return std.mem.eql(u8, &a, &b);
+        }
+    };
+
+    pub fn init(allocator: std.mem.Allocator) Strategy {
+        return Strategy{
+            .lookup = std.HashMap([2]u8, Action, KeyContext, std.hash_map.default_max_load_percentage).init(allocator),
+            .allocator = allocator,
+        };
+    }
+
+    pub fn deinit(self: *Strategy) void {
+        self.lookup.deinit();
+    }
+
+    pub fn loadFromFile(self: *Strategy, file_path: []const u8) !void {
+        const file = std.fs.cwd().openFile(file_path, .{}) catch |err| {
+            print("Error opening strategy file: {}\n", .{err});
+            return err;
+        };
+        defer file.close();
+
+        const file_size = try file.getEndPos();
+        const contents = try self.allocator.alloc(u8, file_size);
+        defer self.allocator.free(contents);
+        _ = try file.readAll(contents);
+
+        var lines = std.mem.splitScalar(u8, contents, '\n');
+
+        // Skip header line
+        _ = lines.next();
+
+        while (lines.next()) |line| {
+            if (line.len == 0) continue;
+
+            var fields = std.mem.splitScalar(u8, line, ',');
+            const player_hand_str = fields.next() orelse continue;
+
+            // Parse player hand
+            var player_hand: u8 = 0;
+            if (std.mem.eql(u8, player_hand_str, "AA")) {
+                player_hand = 1; // Special case for pair of aces
+            } else if (player_hand_str.len >= 2 and player_hand_str[0] == 'A') {
+                // Soft hands like A2, A3, etc.
+                player_hand = 100 + (player_hand_str[1] - '0'); // 102 for A2, 103 for A3, etc.
+            } else if (player_hand_str.len >= 2 and player_hand_str[0] == player_hand_str[1]) {
+                // Pairs like 22, 33, etc.
+                player_hand = 200 + (player_hand_str[0] - '0'); // 202 for 22, 203 for 33, etc.
+            } else {
+                // Hard totals
+                player_hand = std.fmt.parseInt(u8, player_hand_str, 10) catch continue;
+            }
+
+            // Parse dealer up cards and actions
+            var dealer_card: u8 = 2;
+            while (fields.next()) |action_str| {
+                if (action_str.len == 0) continue;
+
+                if (Action.fromChar(action_str[0])) |action| {
+                    const key = [2]u8{ player_hand, dealer_card };
+                    try self.lookup.put(key, action);
+                }
+
+                dealer_card += 1;
+                if (dealer_card == 11) dealer_card = 1; // 10 -> Ace
+                if (dealer_card > 1 and dealer_card < 2) break;
+            }
+        }
+    }
+
+    pub fn getAction(self: *Strategy, player_hand_value: u8, dealer_up_card: u8) Action {
+        const key = [2]u8{ player_hand_value, dealer_up_card };
+        return self.lookup.get(key) orelse .stand; // Default to stand if not found
+    }
+};
+
 const Card = struct {
     suit: u8,
     rank: u8,
@@ -93,15 +197,14 @@ const Player = struct {
         switch (self.betting_strategy) {
             .flat => {},
             .increase_after_win => {
-                const increase = self.table_minimum * 0.5;
-                const rounded_increase = @ceil(increase / 5.0) * 5.0;
-                self.bet = self.table_minimum + rounded_increase;
+                self.bet += self.table_minimum;
             },
             .high_increase_after_win => {
                 if (self.wins_streak <= 2) {
                     self.bet *= 2;
                 } else {
-                    self.bet += self.table_minimum;
+                    const rounded_increase = @ceil(self.bet / 2.0);
+                    self.bet += rounded_increase;
                 }
             },
         }
@@ -162,10 +265,10 @@ const Deck = struct {
         self.cards.clearAndFree();
         try self.createDecks(self.num_decks);
         const total_cards = self.cards.items.len;
-        
+
         // Calculate shuffle point: shuffle when 15-20% of cards remain
-        const min_remaining = total_cards * 15 / 100;  // 15% remaining
-        const max_remaining = total_cards * 20 / 100;  // 20% remaining
+        const min_remaining = total_cards * 15 / 100; // 15% remaining
+        const max_remaining = total_cards * 20 / 100; // 20% remaining
         const range = max_remaining - min_remaining;
         self.shuffle_point = min_remaining + self.rng.random().uintLessThan(usize, range + 1);
 
@@ -280,6 +383,10 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
     var deck = try Deck.init(allocator, config.num_decks);
     defer deck.deinit();
 
+    var strategy = Strategy.init(allocator);
+    defer strategy.deinit();
+    try strategy.loadFromFile("strategies/basic_strategy.csv");
+
     var player = Player.init(config.starting_bankroll, config.table_minimum, config.betting_strategy);
 
     var hands_played: u32 = 0;
@@ -315,10 +422,45 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             try dealer_hand.cards.append(dealer_card2);
         }
 
-        while (dealer_hand.getValue() < 17 or (dealer_hand.getValue() == 17 and dealer_hand.cards.items.len >= 2 and dealer_hand.cards.items[0].isAce())) {
-            if (deck.dealCard()) |card| {
-                try dealer_hand.cards.append(card);
-            } else break;
+        // Player plays their hand using loaded strategy
+        while (player_hand.getValue() < 21) {
+            const player_value = player_hand.getValue();
+            var dealer_up_card = dealer_hand.cards.items[0].rank;
+            if (dealer_up_card > 10) dealer_up_card = 10; // Face cards = 10
+            if (dealer_up_card == 1) dealer_up_card = 1; // Ace = 1 for lookup
+
+            const action = strategy.getAction(player_value, dealer_up_card);
+
+            switch (action) {
+                .hit => {
+                    if (deck.dealCard()) |hit_card| {
+                        try player_hand.cards.append(hit_card);
+                    } else break;
+                },
+                .stand => break,
+                .double_down => {
+                    // For simplicity, treat double down as hit once then stand
+                    if (deck.dealCard()) |hit_card| {
+                        try player_hand.cards.append(hit_card);
+                    }
+                    break;
+                },
+                .split => {
+                    // For simplicity, treat split as hit (splitting not implemented yet)
+                    if (deck.dealCard()) |hit_card| {
+                        try player_hand.cards.append(hit_card);
+                    } else break;
+                },
+            }
+        }
+
+        // Dealer plays only if player didn't bust
+        if (!player_hand.isBust()) {
+            while (dealer_hand.getValue() < 17 or (dealer_hand.getValue() == 17 and dealer_hand.cards.items.len >= 2 and dealer_hand.cards.items[0].isAce())) {
+                if (deck.dealCard()) |card| {
+                    try dealer_hand.cards.append(card);
+                } else break;
+            }
         }
 
         const player_value = player_hand.getValue();
@@ -327,7 +469,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         const dealer_blackjack = dealer_hand.isBlackjack();
 
         var result: []const u8 = "UNKNOWN";
-        var original_bet = player.bet;
+        const original_bet = player.bet;
         var winnings: f64 = 0;
 
         if (player_hand.isBust()) {
@@ -336,9 +478,9 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         } else if (dealer_hand.isBust()) {
             result = "WIN";
             if (player_blackjack) {
-                winnings = player.bet * 1.5;
+                winnings = player.bet * 2.5;
             } else {
-                winnings = player.bet * 1;
+                winnings = player.bet * 2;
             }
             player.updateBetAfterWin();
         } else if (player_blackjack and dealer_blackjack) {
@@ -346,30 +488,27 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             player.recordPush();
         } else if (player_blackjack) {
             result = "WIN";
-            winnings = player.bet * 1.5;
+            winnings = player.bet * 2.5;
             player.updateBetAfterWin();
         } else if (dealer_blackjack) {
             result = "LOSS";
-            original_bet = 0;
             player.resetBetAfterLoss();
         } else if (player_value > dealer_value) {
             result = "WIN";
-            winnings = player.bet;
+            winnings = player.bet * 2.0;
             player.updateBetAfterWin();
         } else if (player_value < dealer_value) {
             result = "LOSS";
-            original_bet = 0;
             player.resetBetAfterLoss();
         } else {
             result = "PUSH";
-            winnings = player.bet;
             player.recordPush();
         }
 
-        player.bankroll += winnings + original_bet;
+        player.bankroll += winnings;
         hands_played += 1;
 
-        print("Hand {}: {s} - Bet: ${d:.2}, Winnings: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, result, player.bet, winnings, player.bankroll, player_value, dealer_value });
+        print("Hand {}: {s} - Bet: ${d:.2}, Winnings: ${d:.2}, New Bet: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, result, original_bet, winnings, player.bet, player.bankroll, player_value, dealer_value });
 
         if (player.bankroll <= 0) {
             print("Player bankrupt after {} hands\n", .{hands_played});
