@@ -8,8 +8,8 @@ const BettingStrategy = @import("player.zig").BettingStrategy;
 const Deck = @import("deck.zig").Deck;
 const Strategy = @import("strategy.zig").Strategy;
 
-
 const GameConfig = struct {
+    attempts: u32 = 1,
     num_hands: u32,
     starting_bankroll: f64 = 1000.0,
     table_minimum: f64 = 10.0,
@@ -28,6 +28,7 @@ fn printHelp() void {
     print("  --minimum <amount>     Table minimum bet (default: $10.00)\n", .{});
     print("  --spots <number>       Maximum spots at table (default: 5)\n", .{});
     print("  --decks <2|6>          Number of decks (default: 6)\n", .{});
+    print("  --attempts <attempts>  Number of simulation runs\n", .{});
     print("  --strategy <strategy>  Betting strategy (default: increase)\n", .{});
     print("  --help                 Show this help message\n\n", .{});
     print("Betting strategies:\n", .{});
@@ -72,6 +73,15 @@ fn parseArgs() !GameConfig {
                     std.process.exit(1);
                 }
                 config.num_decks = decks;
+            }
+        } else if (std.mem.eql(u8, arg, "--attempts")) {
+            if (args.next()) |attempts_str| {
+                const attempts = try std.fmt.parseInt(u8, attempts_str, 10);
+                if (attempts < 1) {
+                    print("Error: Number of attempts must be at least 1\n", .{});
+                    std.process.exit(1);
+                }
+                config.attempts = attempts;
             }
         } else if (std.mem.eql(u8, arg, "--strategy")) {
             if (args.next()) |strategy_str| {
