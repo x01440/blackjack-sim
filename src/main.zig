@@ -278,5 +278,10 @@ pub fn main() !void {
     print("Number of decks: {}\n", .{config.num_decks});
     print("\n", .{});
 
-    try runSimulation(allocator, config);
+    for (0..config.attempts) |attempt| {
+        print("Running simulation attempt {}/{}\n", .{ attempt + 1, config.attempts });
+        try runSimulation(allocator, config);
+    }
+
+    print("{} simulations complete.\n", .{config.attempts});
 }
