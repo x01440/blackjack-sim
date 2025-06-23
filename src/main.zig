@@ -126,134 +126,200 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             print("Deck shuffled\n", .{});
         }
 
-        var player_hand = Hand.init(allocator);
-        defer player_hand.deinit();
-
         if (player.bankroll < player.bet) {
             player.bet = player.bankroll;
         }
+        
+        var player_hand = Hand.init(allocator, player.bet);
+        defer player_hand.deinit();
+        
+        // Deduct the initial bet from bankroll
         player.bankroll -= player.bet;
 
-        var dealer_hand = Hand.init(allocator);
+        var dealer_hand = Hand.init(allocator, 0.0); // Dealer doesn't bet
         defer dealer_hand.deinit();
 
         // Deal cards in proper alternating order: player, dealer, player, dealer
         if (deck.dealCard()) |card1| {
-            try player_hand.cards.append(card1);
+            try player_hand.addCard(0, card1);
         }
         if (deck.dealCard()) |dealer_card1| {
-            try dealer_hand.cards.append(dealer_card1);
+            try dealer_hand.addCard(0, dealer_card1);
         }
         if (deck.dealCard()) |card2| {
-            try player_hand.cards.append(card2);
+            try player_hand.addCard(0, card2);
         }
         if (deck.dealCard()) |dealer_card2| {
-            try dealer_hand.cards.append(dealer_card2);
+            try dealer_hand.addCard(0, dealer_card2);
         }
 
-        // Player plays their hand using loaded strategy
-        var player_done = false;
-        var doubled_down = false;
-        while (player_hand.getValue() < 21 and !player_done) {
-            const player_strategy_key = player_hand.getStrategyKey();
-            var dealer_up_card = dealer_hand.cards.items[0].rank;
-            if (dealer_up_card > 10) dealer_up_card = 10; // Face cards = 10
-
-            const action = strategy.getAction(player_strategy_key, dealer_up_card);
-
-            switch (action) {
-                .hit => {
-                    if (deck.dealCard()) |hit_card| {
-                        try player_hand.cards.append(hit_card);
-                    } else break;
-                },
-                .stand => {
-                    player_done = true;
-                },
-                .double_down => {
-                    // Double down: double the bet, hit once, then stop
-                    if (player.bankroll >= player.bet) {
-                        player.bankroll -= player.bet;
-                        player.bet *= 2;
-                        doubled_down = true;
+        // Player plays all hands using loaded strategy
+        var hand_index: usize = 0;
+        while (hand_index < player_hand.getHandCount()) {
+            var hand_done = false;
+            
+            while (player_hand.getValue(hand_index) < 21 and !hand_done) {
+                const player_strategy_key = player_hand.getStrategyKey(hand_index);
+                var dealer_up_card = dealer_hand.getValue(0);
+                if (dealer_hand.getHand(0)) |dealer_cards| {
+                    if (dealer_cards.items.len > 0) {
+                        dealer_up_card = dealer_cards.items[0].rank;
+                        if (dealer_up_card > 10) dealer_up_card = 10; // Face cards = 10
                     }
-                    if (deck.dealCard()) |hit_card| {
-                        try player_hand.cards.append(hit_card);
-                    }
-                    player_done = true;
-                },
-                .split => {
-                    // For simplicity, treat split as hit (splitting not implemented yet)
-                    if (deck.dealCard()) |hit_card| {
-                        try player_hand.cards.append(hit_card);
-                    } else break;
-                },
+                }
+
+                const action = strategy.getAction(player_strategy_key, dealer_up_card);
+
+                switch (action) {
+                    .hit => {
+                        if (deck.dealCard()) |hit_card| {
+                            try player_hand.addCard(hand_index, hit_card);
+                        } else break;
+                    },
+                    .stand => {
+                        hand_done = true;
+                    },
+                    .double_down => {
+                        // Double down: double the bet, hit once, then stop
+                        const current_bet = player_hand.getBet(hand_index);
+                        if (player.bankroll >= current_bet) {
+                            player.bankroll -= current_bet; // Pay the additional bet amount
+                            try player_hand.setDoubled(hand_index); // This doubles the bet in the hand
+                        }
+                        if (deck.dealCard()) |hit_card| {
+                            try player_hand.addCard(hand_index, hit_card);
+                        }
+                        hand_done = true;
+                    },
+                    .split => {
+                        // Split if possible and we haven't already split this hand
+                        if (player_hand.canSplit(hand_index)) {
+                            // Check if player has enough bankroll for the split bet
+                            const split_bet = player_hand.getBet(hand_index);
+                            if (player.bankroll >= split_bet) {
+                                player.bankroll -= split_bet; // Pay for the split hand
+                                try player_hand.split(hand_index);
+                                
+                                // Deal one card to each split hand
+                                if (deck.dealCard()) |card1| {
+                                    try player_hand.addCard(hand_index, card1);
+                                }
+                                if (deck.dealCard()) |card2| {
+                                    try player_hand.addCard(player_hand.getHandCount() - 1, card2);
+                                }
+                            } else {
+                                // Can't afford to split, treat as hit
+                                if (deck.dealCard()) |hit_card| {
+                                    try player_hand.addCard(hand_index, hit_card);
+                                } else break;
+                            }
+                        } else {
+                            // Can't split, treat as hit
+                            if (deck.dealCard()) |hit_card| {
+                                try player_hand.addCard(hand_index, hit_card);
+                            } else break;
+                        }
+                    },
+                }
+            }
+            hand_index += 1;
+        }
+
+        // Dealer plays only if at least one player hand didn't bust
+        var any_hand_not_bust = false;
+        for (0..player_hand.getHandCount()) |i| {
+            if (!player_hand.isBust(i)) {
+                any_hand_not_bust = true;
+                break;
             }
         }
-
-        // Dealer plays only if player didn't bust
-        if (!player_hand.isBust()) {
-            while (dealer_hand.getValue() < 17 or (dealer_hand.getValue() == 17 and dealer_hand.isSoft())) {
+        
+        if (any_hand_not_bust) {
+            while (dealer_hand.getValue(0) < 17 or (dealer_hand.getValue(0) == 17 and dealer_hand.isSoft(0))) {
                 if (deck.dealCard()) |card| {
-                    try dealer_hand.cards.append(card);
+                    try dealer_hand.addCard(0, card);
                 } else break;
             }
         }
 
-        const player_value = player_hand.getValue();
-        const dealer_value = dealer_hand.getValue();
-        const player_blackjack = player_hand.isBlackjack();
-        const dealer_blackjack = dealer_hand.isBlackjack();
+        const dealer_value = dealer_hand.getValue(0);
+        const dealer_blackjack = dealer_hand.isBlackjack(0);
+        
+        var total_winnings: f64 = 0;
+        var total_wins: u32 = 0;
+        var total_losses: u32 = 0;
+        var total_pushes: u32 = 0;
+        
+        // Evaluate each hand separately
+        for (0..player_hand.getHandCount()) |i| {
+            const player_value = player_hand.getValue(i);
+            const player_blackjack = player_hand.isBlackjack(i);
+            var result: []const u8 = "UNKNOWN";
+            const hand_bet = player_hand.getBet(i);
+            var hand_winnings: f64 = 0;
 
-        var result: []const u8 = "UNKNOWN";
-        const current_bet = player.bet;
-        var winnings: f64 = 0;
+            if (player_hand.isBust(i)) {
+                result = "LOSS";
+                total_losses += 1;
+            } else if (dealer_hand.isBust(0)) {
+                result = "WIN";
+                if (player_blackjack) {
+                    hand_winnings = hand_bet * 2.5;
+                } else {
+                    hand_winnings = hand_bet * 2;
+                }
+                total_wins += 1;
+            } else if (player_blackjack and dealer_blackjack) {
+                result = "PUSH";
+                hand_winnings = hand_bet; // Return bet
+                total_pushes += 1;
+            } else if (player_blackjack) {
+                result = "WIN";
+                hand_winnings = hand_bet * 2.5;
+                total_wins += 1;
+            } else if (dealer_blackjack) {
+                result = "LOSS";
+                total_losses += 1;
+            } else if (player_value > dealer_value) {
+                result = "WIN";
+                hand_winnings = hand_bet * 2.0;
+                total_wins += 1;
+            } else if (player_value < dealer_value) {
+                result = "LOSS";
+                total_losses += 1;
+            } else {
+                result = "PUSH";
+                hand_winnings = hand_bet; // Return bet
+                total_pushes += 1;
+            }
 
-        // Reset bet for betting strategy tracking (will be updated in win/loss methods)
-        if (doubled_down) {
-            player.bet = player.bet / 2; // Reset to original bet amount for strategy tracking
+            total_winnings += hand_winnings;
+            
+            const double_indicator = if (player_hand.isDoubled(i)) " (DOUBLE)" else "";
+            const split_indicator = if (player_hand.isSplit(i)) " (SPLIT)" else "";
+            print("Hand {} ({}): {s}{s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, i + 1, result, double_indicator, split_indicator, hand_bet, hand_winnings, player.bankroll + total_winnings, player_value, dealer_value });
         }
 
-        if (player_hand.isBust()) {
-            result = "LOSS";
-            player.resetBetAfterLoss();
-        } else if (dealer_hand.isBust()) {
-            result = "WIN";
-            if (player_blackjack) {
-                winnings = current_bet * 2.5;
-            } else {
-                winnings = current_bet * 2;
-            }
+        // Show summary of this round
+        const total_bet = player_hand.getTotalBetAmount();
+        print("Round {} Summary: Total Bet: ${d:.2}, Total Winnings: ${d:.2}, Net: ${d:.2}\n", .{ hands_played, total_bet, total_winnings, total_winnings - total_bet });
+
+        // Update betting strategy based on overall result
+        if (total_wins > total_losses) {
             player.updateBetAfterWin();
-        } else if (player_blackjack and dealer_blackjack) {
-            result = "PUSH";
-            winnings = current_bet * 2; // Assume even money on average.
-            player.recordPush();
-        } else if (player_blackjack) {
-            result = "WIN";
-            winnings = current_bet * 2.5;
-            player.updateBetAfterWin();
-        } else if (dealer_blackjack) {
-            result = "LOSS";
-            player.resetBetAfterLoss();
-        } else if (player_value > dealer_value) {
-            result = "WIN";
-            winnings = current_bet * 2.0;
-            player.updateBetAfterWin();
-        } else if (player_value < dealer_value) {
-            result = "LOSS";
+        } else if (total_losses > total_wins) {
             player.resetBetAfterLoss();
         } else {
-            result = "PUSH";
-            winnings = current_bet; // Return bet
             player.recordPush();
         }
 
-        player.bankroll += winnings;
+        // Update player stats
+        player.wins += total_wins;
+        player.losses += total_losses;
+        player.pushes += total_pushes;
+        
+        player.bankroll += total_winnings;
         hands_played += 1;
-
-        const double_indicator = if (doubled_down) " (DOUBLE)" else "";
-        print("Hand {}: {s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, New Bet: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, result, double_indicator, current_bet, winnings, player.bet, player.bankroll, player_value, dealer_value });
 
         if (player.bankroll <= 0) {
             print("Player bankrupt after {} hands\n", .{hands_played});
