@@ -220,19 +220,17 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
               "Net: ${d:.2}\n", .{ hands_played, total_bet, total_winnings, 
               total_winnings - total_bet });
 
-        // Update betting strategy based on overall result
+        // Update betting strategy and player stats based on overall round result
         if (total_wins > total_losses) {
             player.updateBetAfterWin();
+            player.wins += 1; // Count this round as 1 win
         } else if (total_losses > total_wins) {
             player.resetBetAfterLoss();
+            player.losses += 1; // Count this round as 1 loss
         } else {
             player.recordPush();
+            player.pushes += 1; // Count this round as 1 push
         }
-
-        // Update player stats
-        player.wins += total_wins;
-        player.losses += total_losses;
-        player.pushes += total_pushes;
         
         player.bankroll += total_winnings;
         hands_played += 1;

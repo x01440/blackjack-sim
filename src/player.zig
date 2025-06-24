@@ -31,7 +31,6 @@ pub const Player = struct {
 
     pub fn updateBetAfterWin(self: *Player) void {
         self.wins_streak += 1;
-        self.wins += 1;
 
         switch (self.betting_strategy) {
             .flat => {},
@@ -52,12 +51,10 @@ pub const Player = struct {
     pub fn resetBetAfterLoss(self: *Player) void {
         self.wins_streak = 0;
         self.bet = self.table_minimum;
-        self.losses += 1;
     }
 
     pub fn recordPush(self: *Player) void {
         self.wins_streak = 0;
         self.bet = self.table_minimum;
-        self.pushes += 1;
     }
 };
