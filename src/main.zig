@@ -7,106 +7,9 @@ const Player = @import("player.zig").Player;
 const BettingStrategy = @import("player.zig").BettingStrategy;
 const Deck = @import("deck.zig").Deck;
 const Strategy = @import("strategy.zig").Strategy;
-
-const GameConfig = struct {
-    attempts: u32 = 1,
-    num_hands: u32,
-    starting_bankroll: f64 = 1000.0,
-    table_minimum: f64 = 10.0,
-    max_spots: u8 = 5,
-    num_decks: u8 = 6,
-    betting_strategy: BettingStrategy = .increase_after_win,
-};
-
-fn printHelp() void {
-    print("Blackjack Simulator\n", .{});
-    print("Usage: blackjack-sim --hands <number> [options]\n\n", .{});
-    print("Required arguments:\n", .{});
-    print("  --hands <number>       Number of hands to simulate\n\n", .{});
-    print("Optional arguments:\n", .{});
-    print("  --bankroll <amount>    Starting bankroll amount (default: $1000.00)\n", .{});
-    print("  --minimum <amount>     Table minimum bet (default: $10.00)\n", .{});
-    print("  --spots <number>       Maximum spots at table (default: 5)\n", .{});
-    print("  --decks <2|6>          Number of decks (default: 6)\n", .{});
-    print("  --attempts <attempts>  Number of simulation runs\n", .{});
-    print("  --strategy <strategy>  Betting strategy (default: increase)\n", .{});
-    print("  --help                 Show this help message\n\n", .{});
-    print("Betting strategies:\n", .{});
-    print("  flat                   Always bet table minimum\n", .{});
-    print("  increase               Increase bet by 50%% of table minimum after win\n", .{});
-    print("                         (rounded up to nearest $5)\n", .{});
-    print("  high_increase          Double bet after first two wins, then increase\n", .{});
-    print("                         by table minimum for each subsequent win\n", .{});
-}
-
-fn parseArgs() !GameConfig {
-    var args = std.process.args();
-    _ = args.skip();
-
-    var config = GameConfig{ .num_hands = 0 };
-
-    while (args.next()) |arg| {
-        if (std.mem.eql(u8, arg, "--help")) {
-            printHelp();
-            std.process.exit(0);
-        } else if (std.mem.eql(u8, arg, "--hands")) {
-            if (args.next()) |hands_str| {
-                config.num_hands = try std.fmt.parseInt(u32, hands_str, 10);
-            }
-        } else if (std.mem.eql(u8, arg, "--bankroll")) {
-            if (args.next()) |bankroll_str| {
-                config.starting_bankroll = try std.fmt.parseFloat(f64, bankroll_str);
-            }
-        } else if (std.mem.eql(u8, arg, "--minimum")) {
-            if (args.next()) |min_str| {
-                config.table_minimum = try std.fmt.parseFloat(f64, min_str);
-            }
-        } else if (std.mem.eql(u8, arg, "--spots")) {
-            if (args.next()) |spots_str| {
-                config.max_spots = try std.fmt.parseInt(u8, spots_str, 10);
-            }
-        } else if (std.mem.eql(u8, arg, "--decks")) {
-            if (args.next()) |decks_str| {
-                const decks = try std.fmt.parseInt(u8, decks_str, 10);
-                if (decks != 2 and decks != 6) {
-                    print("Error: Number of decks must be 2 or 6\n", .{});
-                    std.process.exit(1);
-                }
-                config.num_decks = decks;
-            }
-        } else if (std.mem.eql(u8, arg, "--attempts")) {
-            if (args.next()) |attempts_str| {
-                const attempts = try std.fmt.parseInt(u8, attempts_str, 10);
-                if (attempts < 1) {
-                    print("Error: Number of attempts must be at least 1\n", .{});
-                    std.process.exit(1);
-                }
-                config.attempts = attempts;
-            }
-        } else if (std.mem.eql(u8, arg, "--strategy")) {
-            if (args.next()) |strategy_str| {
-                if (std.mem.eql(u8, strategy_str, "flat")) {
-                    config.betting_strategy = .flat;
-                } else if (std.mem.eql(u8, strategy_str, "increase")) {
-                    config.betting_strategy = .increase_after_win;
-                } else if (std.mem.eql(u8, strategy_str, "high_increase")) {
-                    config.betting_strategy = .high_increase_after_win;
-                } else {
-                    print("Error: Unknown betting strategy '{s}'\n", .{strategy_str});
-                    std.process.exit(1);
-                }
-            }
-        }
-    }
-
-    if (config.num_hands == 0) {
-        print("Error: --hands argument is required\n", .{});
-        print("Use --help for usage information\n", .{});
-        std.process.exit(1);
-    }
-
-    return config;
-}
+const GameConstants = @import("constants.zig").GameConstants;
+const cli = @import("cli.zig");
+const GameConfig = cli.GameConfig;
 
 fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
     var deck = try Deck.init(allocator, config.num_decks);
@@ -120,7 +23,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
 
     var hands_played: u32 = 0;
 
-    while (hands_played < config.num_hands and player.bankroll >= config.table_minimum) {
+    while (hands_played < config.num_hands and player.bankroll >= config.table_minimum and player.bankroll < config.quit_threshold) {
         if (deck.needsShuffle()) {
             try deck.shuffle();
             print("Deck shuffled\n", .{});
@@ -264,32 +167,32 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             } else if (dealer_hand.isBust(0)) {
                 result = "WIN";
                 if (player_blackjack) {
-                    hand_winnings = hand_bet * 2.5;
+                    hand_winnings = hand_bet * GameConstants.blackjack_payout;
                 } else {
-                    hand_winnings = hand_bet * 2;
+                    hand_winnings = hand_bet * GameConstants.standard_win_payout;
                 }
                 total_wins += 1;
             } else if (player_blackjack and dealer_blackjack) {
                 result = "PUSH";
-                hand_winnings = hand_bet; // Return bet
+                hand_winnings = hand_bet * GameConstants.push_payout; // Return bet
                 total_pushes += 1;
             } else if (player_blackjack) {
                 result = "WIN";
-                hand_winnings = hand_bet * 2.5;
+                hand_winnings = hand_bet * GameConstants.blackjack_payout;
                 total_wins += 1;
             } else if (dealer_blackjack) {
                 result = "LOSS";
                 total_losses += 1;
             } else if (player_value > dealer_value) {
                 result = "WIN";
-                hand_winnings = hand_bet * 2.0;
+                hand_winnings = hand_bet * GameConstants.standard_win_payout;
                 total_wins += 1;
             } else if (player_value < dealer_value) {
                 result = "LOSS";
                 total_losses += 1;
             } else {
                 result = "PUSH";
-                hand_winnings = hand_bet; // Return bet
+                hand_winnings = hand_bet * GameConstants.push_payout; // Return bet
                 total_pushes += 1;
             }
 
@@ -327,6 +230,13 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         }
     }
 
+    // Check why simulation ended
+    if (player.bankroll >= config.quit_threshold) {
+        print("Quit threshold of ${d:.2} reached after {} hands\n", .{ config.quit_threshold, hands_played });
+    } else if (player.bankroll < config.table_minimum and player.bankroll > 0) {
+        print("Bankroll too low to continue after {} hands\n", .{hands_played});
+    }
+
     print("\nSimulation complete. Final bankroll: ${d:.2}\n", .{player.bankroll});
     print("Results: {} wins, {} losses, {} pushes\n", .{ player.wins, player.losses, player.pushes });
 }
@@ -336,10 +246,11 @@ pub fn main() !void {
     defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
-    const config = try parseArgs();
+    const config = try cli.parseArgs();
     print("Blackjack Simulator - Running {} hands\n", .{config.num_hands});
     print("Starting bankroll: ${d:.2}\n", .{config.starting_bankroll});
     print("Table minimum: ${d:.2}\n", .{config.table_minimum});
+    print("Quit threshold: ${d:.2}\n", .{config.quit_threshold});
     print("Max spots: {}\n", .{config.max_spots});
     print("Number of decks: {}\n", .{config.num_decks});
     print("\n", .{});
