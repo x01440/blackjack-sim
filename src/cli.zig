@@ -20,12 +20,18 @@ pub fn printHelp() void {
     print("Required arguments:\n", .{});
     print("  --hands <number>       Number of hands to simulate\n\n", .{});
     print("Optional arguments:\n", .{});
-    print("  --bankroll <amount>    Starting bankroll amount (default: ${d:.2})\n", .{GameConstants.default_starting_bankroll});
-    print("  --minimum <amount>     Table minimum bet (default: ${d:.2})\n", .{GameConstants.default_table_minimum});
-    print("  --spots <number>       Maximum spots at table (default: {})\n", .{GameConstants.default_max_spots});
-    print("  --decks <2|6>          Number of decks (default: {})\n", .{GameConstants.default_num_decks});
-    print("  --attempts <attempts>  Number of simulation runs (default: {})\n", .{GameConstants.default_attempts});
-    print("  --quit_threshold <amount> Stop when bankroll reaches this amount (default: ${d:.2})\n", .{GameConstants.quit_threshold});
+    print("  --bankroll <amount>    Starting bankroll amount (default: ${d:.2})\n", 
+          .{GameConstants.default_starting_bankroll});
+    print("  --minimum <amount>     Table minimum bet (default: ${d:.2})\n", 
+          .{GameConstants.default_table_minimum});
+    print("  --spots <number>       Maximum spots at table (default: {})\n", 
+          .{GameConstants.default_max_spots});
+    print("  --decks <2|6>          Number of decks (default: {})\n", 
+          .{GameConstants.default_num_decks});
+    print("  --attempts <attempts>  Number of simulation runs (default: {})\n", 
+          .{GameConstants.default_attempts});
+    print("  --quit_threshold <amount> Stop when bankroll reaches this amount " ++
+          "(default: ${d:.2})\n", .{GameConstants.quit_threshold});
     print("  --strategy <strategy>  Betting strategy (default: increase)\n", .{});
     print("  --help                 Show this help message\n\n", .{});
     print("Betting strategies:\n", .{});

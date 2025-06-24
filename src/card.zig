@@ -60,7 +60,9 @@ pub const Hand = struct {
     pub fn canSplit(self: Hand, hand_index: usize) bool {
         if (hand_index >= self.hands.items.len) return false;
         const hand = &self.hands.items[hand_index];
-        return hand.items.len == 2 and hand.items[0].rank == hand.items[1].rank and !self.split_flags.items[hand_index];
+        return hand.items.len == 2 and 
+               hand.items[0].rank == hand.items[1].rank and 
+               !self.split_flags.items[hand_index];
     }
     
     pub fn split(self: *Hand, hand_index: usize) !void {

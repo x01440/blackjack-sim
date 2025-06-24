@@ -35,7 +35,12 @@ pub const Strategy = struct {
 
     pub fn init(allocator: std.mem.Allocator) Strategy {
         return Strategy{
-            .lookup = std.HashMap([2]u8, Action, KeyContext, std.hash_map.default_max_load_percentage).init(allocator),
+            .lookup = std.HashMap(
+                [2]u8, 
+                Action, 
+                KeyContext, 
+                std.hash_map.default_max_load_percentage
+            ).init(allocator),
             .allocator = allocator,
         };
     }

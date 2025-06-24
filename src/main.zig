@@ -19,11 +19,17 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
     defer strategy.deinit();
     try strategy.loadFromFile("strategies/basic_strategy.csv");
 
-    var player = Player.init(config.starting_bankroll, config.table_minimum, config.betting_strategy);
+    var player = Player.init(
+        config.starting_bankroll,
+        config.table_minimum,
+        config.betting_strategy,
+    );
 
     var hands_played: u32 = 0;
 
-    while (hands_played < config.num_hands and player.bankroll >= config.table_minimum and player.bankroll < config.quit_threshold) {
+    while (hands_played < config.num_hands and 
+           player.bankroll >= config.table_minimum and 
+           player.bankroll < config.quit_threshold) {
         if (deck.needsShuffle()) {
             try deck.shuffle();
             print("Deck shuffled\n", .{});
@@ -87,7 +93,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
                         const current_bet = player_hand.getBet(hand_index);
                         if (player.bankroll >= current_bet) {
                             player.bankroll -= current_bet; // Pay the additional bet amount
-                            try player_hand.setDoubled(hand_index); // This doubles the bet in the hand
+                            try player_hand.setDoubled(hand_index); // This doubles the bet
                         }
                         if (deck.dealCard()) |hit_card| {
                             try player_hand.addCard(hand_index, hit_card);
@@ -138,7 +144,8 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         }
         
         if (any_hand_not_bust) {
-            while (dealer_hand.getValue(0) < 17 or (dealer_hand.getValue(0) == 17 and dealer_hand.isSoft(0))) {
+            while (dealer_hand.getValue(0) < 17 or 
+                   (dealer_hand.getValue(0) == 17 and dealer_hand.isSoft(0))) {
                 if (deck.dealCard()) |card| {
                     try dealer_hand.addCard(0, card);
                 } else break;
@@ -200,12 +207,18 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             
             const double_indicator = if (player_hand.isDoubled(i)) " (DOUBLE)" else "";
             const split_indicator = if (player_hand.isSplit(i)) " (SPLIT)" else "";
-            print("Hand {} ({}): {s}{s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played, i + 1, result, double_indicator, split_indicator, hand_bet, hand_winnings, player.bankroll + total_winnings, player_value, dealer_value });
+            print("Hand {} ({}): {s}{s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, " ++
+                  "Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", 
+                  .{ hands_played, i + 1, result, double_indicator, split_indicator, 
+                     hand_bet, hand_winnings, player.bankroll + total_winnings, 
+                     player_value, dealer_value });
         }
 
         // Show summary of this round
         const total_bet = player_hand.getTotalBetAmount();
-        print("Round {} Summary: Total Bet: ${d:.2}, Total Winnings: ${d:.2}, Net: ${d:.2}\n", .{ hands_played, total_bet, total_winnings, total_winnings - total_bet });
+        print("Round {} Summary: Total Bet: ${d:.2}, Total Winnings: ${d:.2}, " ++
+              "Net: ${d:.2}\n", .{ hands_played, total_bet, total_winnings, 
+              total_winnings - total_bet });
 
         // Update betting strategy based on overall result
         if (total_wins > total_losses) {
@@ -232,13 +245,15 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
 
     // Check why simulation ended
     if (player.bankroll >= config.quit_threshold) {
-        print("Quit threshold of ${d:.2} reached after {} hands\n", .{ config.quit_threshold, hands_played });
+        print("Quit threshold of ${d:.2} reached after {} hands\n", 
+              .{ config.quit_threshold, hands_played });
     } else if (player.bankroll < config.table_minimum and player.bankroll > 0) {
         print("Bankroll too low to continue after {} hands\n", .{hands_played});
     }
 
     print("\nSimulation complete. Final bankroll: ${d:.2}\n", .{player.bankroll});
-    print("Results: {} wins, {} losses, {} pushes\n", .{ player.wins, player.losses, player.pushes });
+    print("Results: {} wins, {} losses, {} pushes\n", 
+          .{ player.wins, player.losses, player.pushes });
 }
 
 pub fn main() !void {

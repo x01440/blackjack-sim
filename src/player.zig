@@ -16,7 +16,11 @@ pub const Player = struct {
     betting_strategy: BettingStrategy,
     table_minimum: f64,
 
-    pub fn init(starting_bankroll: f64, table_minimum: f64, betting_strategy: BettingStrategy) Player {
+    pub fn init(
+        starting_bankroll: f64, 
+        table_minimum: f64, 
+        betting_strategy: BettingStrategy
+    ) Player {
         return Player{
             .bankroll = starting_bankroll,
             .bet = table_minimum,
