@@ -10,26 +10,54 @@ const Strategy = @import("strategy.zig").Strategy;
 const GameConstants = @import("constants.zig").GameConstants;
 const cli = @import("cli.zig");
 const GameConfig = cli.GameConfig;
+const GameResult = @import("game_result.zig").GameResult;
 
-fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
+fn generateSeed(base_seed: ?[]const u8, sim_number: usize) u64 {
+    if (base_seed) |seed_str| {
+        // Hash the seed string for deterministic but pseudorandom results
+        var hasher = std.hash.Wyhash.init(0);
+        hasher.update(seed_str);
+        hasher.update(std.mem.asBytes(&sim_number));
+        return hasher.final();
+    } else {
+        // Use high-resolution time + simulation number for entropy
+        const nanos = std.time.nanoTimestamp();
+        const time_seed = @as(u64, @intCast(@mod(nanos, std.math.maxInt(u64))));
+        
+        // Mix with simulation number using bit operations for better distribution
+        var seed = time_seed;
+        const sim_u64 = @as(u64, sim_number);
+        seed ^= sim_u64 << 32;
+        seed ^= sim_u64 >> 16; 
+        seed +%= sim_u64 *% 0x9e3779b97f4a7c15; // Golden ratio multiplier with overflow wrap
+        
+        return seed;
+    }
+}
+
+fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Player, sim_number: usize) !GameResult {
     var deck = try Deck.init(allocator, config.num_decks);
     defer deck.deinit();
+    
+    // Generate unique seed for each simulation
+    const seed = generateSeed(config.seed, sim_number);
+    deck.rng = std.Random.DefaultPrng.init(seed);
+    try deck.shuffle(); // Re-shuffle with new seed
 
     var strategy = Strategy.init(allocator);
     defer strategy.deinit();
     try strategy.loadFromFile("strategies/basic_strategy.csv");
 
-    var player = Player.init(
-        config.starting_bankroll,
-        config.table_minimum,
-        config.betting_strategy,
-    );
+    player.reset(config.starting_bankroll);
 
     var hands_played: u32 = 0;
+    var max_bet: f64 = 0.0;
+    const starting_bankroll = config.starting_bankroll;
 
-    while (hands_played < config.num_hands and 
-           player.bankroll >= config.table_minimum and 
-           player.bankroll < config.quit_threshold) {
+    while (hands_played < config.num_hands and
+        player.bankroll >= config.table_minimum and
+        player.bankroll < config.quit_threshold)
+    {
         if (deck.needsShuffle()) {
             try deck.shuffle();
             print("Deck shuffled\n", .{});
@@ -38,10 +66,14 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         if (player.bankroll < player.bet) {
             player.bet = player.bankroll;
         }
-        
+
+        if (player.bet > max_bet) {
+            max_bet = player.bet;
+        }
+
         var player_hand = Hand.init(allocator, player.bet);
         defer player_hand.deinit();
-        
+
         // Deduct the initial bet from bankroll
         player.bankroll -= player.bet;
 
@@ -66,7 +98,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
         var hand_index: usize = 0;
         while (hand_index < player_hand.getHandCount()) {
             var hand_done = false;
-            
+
             while (player_hand.getValue(hand_index) < 21 and !hand_done) {
                 const player_strategy_key = player_hand.getStrategyKey(hand_index);
                 var dealer_up_card = dealer_hand.getValue(0);
@@ -108,7 +140,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
                             if (player.bankroll >= split_bet) {
                                 player.bankroll -= split_bet; // Pay for the split hand
                                 try player_hand.split(hand_index);
-                                
+
                                 // Deal one card to each split hand
                                 if (deck.dealCard()) |card1| {
                                     try player_hand.addCard(hand_index, card1);
@@ -142,10 +174,11 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
                 break;
             }
         }
-        
+
         if (any_hand_not_bust) {
-            while (dealer_hand.getValue(0) < 17 or 
-                   (dealer_hand.getValue(0) == 17 and dealer_hand.isSoft(0))) {
+            while (dealer_hand.getValue(0) < 17 or
+                (dealer_hand.getValue(0) == 17 and dealer_hand.isSoft(0)))
+            {
                 if (deck.dealCard()) |card| {
                     try dealer_hand.addCard(0, card);
                 } else break;
@@ -154,12 +187,12 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
 
         const dealer_value = dealer_hand.getValue(0);
         const dealer_blackjack = dealer_hand.isBlackjack(0);
-        
+
         var total_winnings: f64 = 0;
         var total_wins: u32 = 0;
         var total_losses: u32 = 0;
         var total_pushes: u32 = 0;
-        
+
         // Evaluate each hand separately
         for (0..player_hand.getHandCount()) |i| {
             const player_value = player_hand.getValue(i);
@@ -204,21 +237,12 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             }
 
             total_winnings += hand_winnings;
-            
+
             const double_indicator = if (player_hand.isDoubled(i)) " (DOUBLE)" else "";
             const split_indicator = if (player_hand.isSplit(i)) " (SPLIT)" else "";
             print("Hand {} ({}): {s}{s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, " ++
-                  "Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", 
-                  .{ hands_played, i + 1, result, double_indicator, split_indicator, 
-                     hand_bet, hand_winnings, player.bankroll + total_winnings, 
-                     player_value, dealer_value });
+                "Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played + 1, i + 1, result, double_indicator, split_indicator, hand_bet, total_winnings, player.bankroll + total_winnings, player_value, dealer_value });
         }
-
-        // Show summary of this round
-        const total_bet = player_hand.getTotalBetAmount();
-        print("Round {} Summary: Total Bet: ${d:.2}, Total Winnings: ${d:.2}, " ++
-              "Net: ${d:.2}\n", .{ hands_played, total_bet, total_winnings, 
-              total_winnings - total_bet });
 
         // Update betting strategy and player stats based on overall round result
         if (total_wins > total_losses) {
@@ -231,7 +255,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
             player.recordPush();
             player.pushes += 1; // Count this round as 1 push
         }
-        
+
         player.bankroll += total_winnings;
         hands_played += 1;
 
@@ -243,15 +267,57 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig) !void {
 
     // Check why simulation ended
     if (player.bankroll >= config.quit_threshold) {
-        print("Quit threshold of ${d:.2} reached after {} hands\n", 
-              .{ config.quit_threshold, hands_played });
+        print("Quit threshold of ${d:.2} reached after {} hands\n", .{ config.quit_threshold, hands_played });
     } else if (player.bankroll < config.table_minimum and player.bankroll > 0) {
         print("Bankroll too low to continue after {} hands\n", .{hands_played});
     }
 
     print("\nSimulation complete. Final bankroll: ${d:.2}\n", .{player.bankroll});
-    print("Results: {} wins, {} losses, {} pushes\n", 
-          .{ player.wins, player.losses, player.pushes });
+    print("Results: {} wins, {} losses, {} pushes\n", .{ player.wins, player.losses, player.pushes });
+
+    const winnings = player.bankroll - starting_bankroll;
+    return GameResult.init(
+        hands_played,
+        player.wins,
+        player.losses,
+        player.pushes,
+        max_bet,
+        winnings,
+        player.bankroll,
+        starting_bankroll,
+    );
+}
+
+fn writeResultsToCSV(results: []const GameResult) !void {
+    std.fs.cwd().makeDir("data-out") catch |err| switch (err) {
+        error.PathAlreadyExists => {},
+        else => return err,
+    };
+
+    const file = try std.fs.cwd().createFile("data-out/simulation_results.csv", .{});
+    defer file.close();
+
+    const writer = file.writer();
+
+    try writer.writeAll("simulation,total_hands,player_wins,player_losses,ties,max_bet,winnings,final_bankroll,starting_bankroll,net_winnings,win_rate\n");
+
+    for (results, 0..) |result, i| {
+        try writer.print("{},{},{},{},{},{d:.2},{d:.2},{d:.2},{d:.2},{d:.2},{d:.4}\n", .{
+            i + 1,
+            result.total_hands,
+            result.player_wins,
+            result.player_losses,
+            result.ties,
+            result.max_bet,
+            result.winnings,
+            result.final_bankroll,
+            result.starting_bankroll,
+            result.getNetWinnings(),
+            result.getWinRate(),
+        });
+    }
+
+    print("Results written to data-out/simulation_results.csv\n", .{});
 }
 
 pub fn main() !void {
@@ -268,10 +334,22 @@ pub fn main() !void {
     print("Number of decks: {}\n", .{config.num_decks});
     print("\n", .{});
 
+    var results = std.ArrayList(GameResult).init(allocator);
+    defer results.deinit();
+
+    var player = Player.init(
+        config.starting_bankroll,
+        config.table_minimum,
+        config.betting_strategy,
+    );
+
     for (0..config.attempts) |attempt| {
         print("Running simulation attempt {}/{}\n", .{ attempt + 1, config.attempts });
-        try runSimulation(allocator, config);
+        const result = try runSimulation(allocator, config, &player, attempt);
+        try results.append(result);
     }
 
     print("{} simulations complete.\n", .{config.attempts});
+
+    try writeResultsToCSV(results.items);
 }

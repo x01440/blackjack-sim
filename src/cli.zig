@@ -12,6 +12,7 @@ pub const GameConfig = struct {
     num_decks: u8 = GameConstants.default_num_decks,
     quit_threshold: f64 = GameConstants.quit_threshold,
     betting_strategy: BettingStrategy = .increase_after_win,
+    seed: ?[]const u8 = null,
 };
 
 pub fn printHelp() void {
@@ -33,6 +34,7 @@ pub fn printHelp() void {
     print("  --quit_threshold <amount> Stop when bankroll reaches this amount " ++
           "(default: ${d:.2})\n", .{GameConstants.quit_threshold});
     print("  --strategy <strategy>  Betting strategy (default: increase)\n", .{});
+    print("  --seed <string>        Seed for random number generation (optional)\n", .{});
     print("  --help                 Show this help message\n\n", .{});
     print("Betting strategies:\n", .{});
     print("  flat                   Always bet table minimum\n", .{});
@@ -109,6 +111,10 @@ pub fn parseArgs() !GameConfig {
                     print("Error: Unknown betting strategy '{s}'\n", .{strategy_str});
                     std.process.exit(1);
                 }
+            }
+        } else if (std.mem.eql(u8, arg, "--seed")) {
+            if (args.next()) |seed_str| {
+                config.seed = seed_str;
             }
         }
     }

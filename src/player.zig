@@ -57,4 +57,13 @@ pub const Player = struct {
         self.wins_streak = 0;
         self.bet = self.table_minimum;
     }
+
+    pub fn reset(self: *Player, starting_bankroll: f64) void {
+        self.bankroll = starting_bankroll;
+        self.bet = self.table_minimum;
+        self.wins_streak = 0;
+        self.wins = 0;
+        self.losses = 0;
+        self.pushes = 0;
+    }
 };
