@@ -23,14 +23,14 @@ fn generateSeed(base_seed: ?[]const u8, sim_number: usize) u64 {
         // Use high-resolution time + simulation number for entropy
         const nanos = std.time.nanoTimestamp();
         const time_seed = @as(u64, @intCast(@mod(nanos, std.math.maxInt(u64))));
-        
+
         // Mix with simulation number using bit operations for better distribution
         var seed = time_seed;
         const sim_u64 = @as(u64, sim_number);
         seed ^= sim_u64 << 32;
-        seed ^= sim_u64 >> 16; 
+        seed ^= sim_u64 >> 16;
         seed +%= sim_u64 *% 0x9e3779b97f4a7c15; // Golden ratio multiplier with overflow wrap
-        
+
         return seed;
     }
 }
@@ -38,7 +38,7 @@ fn generateSeed(base_seed: ?[]const u8, sim_number: usize) u64 {
 fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Player, sim_number: usize) !GameResult {
     var deck = try Deck.init(allocator, config.num_decks);
     defer deck.deinit();
-    
+
     // Generate unique seed for each simulation
     const seed = generateSeed(config.seed, sim_number);
     deck.rng = std.Random.DefaultPrng.init(seed);
@@ -60,7 +60,9 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Play
     {
         if (deck.needsShuffle()) {
             try deck.shuffle();
-            print("Deck shuffled\n", .{});
+            if (GameConstants.verbose) {
+                print("Deck shuffled\n", .{});
+            }
         }
 
         if (player.bankroll < player.bet) {
@@ -238,10 +240,12 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Play
 
             total_winnings += hand_winnings;
 
-            const double_indicator = if (player_hand.isDoubled(i)) " (DOUBLE)" else "";
-            const split_indicator = if (player_hand.isSplit(i)) " (SPLIT)" else "";
-            print("Hand {} ({}): {s}{s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, " ++
-                "Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played + 1, i + 1, result, double_indicator, split_indicator, hand_bet, total_winnings, player.bankroll + total_winnings, player_value, dealer_value });
+            if (GameConstants.verbose) {
+                const double_indicator = if (player_hand.isDoubled(i)) " (DOUBLE)" else "";
+                const split_indicator = if (player_hand.isSplit(i)) " (SPLIT)" else "";
+                print("Hand {} ({}): {s}{s}{s} - Bet: ${d:.2}, Winnings: ${d:.2}, " ++
+                    "Bankroll: ${d:.2} (Player: {}, Dealer: {})\n", .{ hands_played + 1, i + 1, result, double_indicator, split_indicator, hand_bet, total_winnings, player.bankroll + total_winnings, player_value, dealer_value });
+            }
         }
 
         // Update betting strategy and player stats based on overall round result
