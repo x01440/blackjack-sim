@@ -16,7 +16,7 @@ The codebase should be modular with the following file structure:
 - `src/player.zig` - Player structure and betting strategies
 - `src/deck.zig` - Deck management, shuffling, and dealing
 - `src/main.zig` - Main simulation loop, strategy loading, and command line interface
-- `strategies/` - Directory containing CSV strategy files
+- `strategies/` - Directory containing CSV basic strategy files
 
 ## Parameters
 

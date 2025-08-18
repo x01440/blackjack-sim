@@ -8,8 +8,7 @@ This is a blackjack simulator written in zig. For details about how it was const
 - `--attempts <number>`: Sets how many times to run the entire simulation (each with the specified number of hands).
 - `--decks <number>`: (If implemented) Sets the number of decks to use in the shoe.
 - `--bet <amount>`: (If implemented) Sets the base bet amount for each hand.
-- `--strategy <file>`: (If implemented) Loads a basic strategy matrix from a CSV file.
-- `--betting_strategy [flat|increase|high_increase]`: (If implemented) Sets the betting strategy based on the built in betting strategy.
+- `--strategy [flat|increase|high_increase]`: (If implemented) Sets the betting strategy based on the built in betting strategy.
 - `--verbose`: (If implemented) Enables detailed output for each hand played.
 
 ## Notes on Claude's mistakes

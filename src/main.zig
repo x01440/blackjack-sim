@@ -12,6 +12,17 @@ const cli = @import("cli.zig");
 const GameConfig = cli.GameConfig;
 const GameResult = @import("game_result.zig").GameResult;
 
+const WorkerTask = struct {
+    allocator: std.mem.Allocator,
+    config: GameConfig,
+    sim_number: usize,
+};
+
+const WorkerResult = struct {
+    result: GameResult,
+    sim_number: usize,
+};
+
 fn generateSeed(base_seed: ?[]const u8, sim_number: usize) u64 {
     if (base_seed) |seed_str| {
         // Hash the seed string for deterministic but pseudorandom results
@@ -35,7 +46,7 @@ fn generateSeed(base_seed: ?[]const u8, sim_number: usize) u64 {
     }
 }
 
-fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Player, sim_number: usize) !GameResult {
+fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, sim_number: usize) !GameResult {
     var deck = try Deck.init(allocator, config.num_decks);
     defer deck.deinit();
 
@@ -48,7 +59,12 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Play
     defer strategy.deinit();
     try strategy.loadFromFile("strategies/basic_strategy.csv");
 
-    player.reset(config.starting_bankroll);
+    var player = Player.init(
+        config.starting_bankroll,
+        config.table_minimum,
+        config.betting_strategy,
+    );
+    _ = &player;
 
     var hands_played: u32 = 0;
     var max_bet: f64 = 0.0;
@@ -276,8 +292,10 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Play
         print("Bankroll too low to continue after {} hands\n", .{hands_played});
     }
 
-    print("\nSimulation complete. Final bankroll: ${d:.2}\n", .{player.bankroll});
-    print("Results: {} wins, {} losses, {} pushes\n", .{ player.wins, player.losses, player.pushes });
+    if (GameConstants.verbose) {
+        print("Simulation complete. Final bankroll: ${d:.2}\n", .{player.bankroll});
+        print("Results: {} wins, {} losses, {} pushes\n\n", .{ player.wins, player.losses, player.pushes });
+    }
 
     const winnings = player.bankroll - starting_bankroll;
     return GameResult.init(
@@ -290,6 +308,28 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, player: *Play
         player.bankroll,
         starting_bankroll,
     );
+}
+
+fn workerThread(_: std.mem.Allocator, tasks: *std.ArrayList(WorkerTask), results: *std.ArrayList(WorkerResult), mutex: *std.Thread.Mutex) !void {
+    while (true) {
+        mutex.lock();
+        const maybe_task = if (tasks.items.len > 0) tasks.orderedRemove(0) else null;
+        mutex.unlock();
+
+        if (maybe_task) |task| {
+            const result = try runSimulation(task.allocator, task.config, task.sim_number);
+
+            mutex.lock();
+            try results.append(WorkerResult{
+                .result = result,
+                .sim_number = task.sim_number,
+            });
+            print("Simulation {} complete\n", .{task.sim_number});
+            mutex.unlock();
+        } else {
+            break;
+        }
+    }
 }
 
 fn writeResultsToCSV(results: []const GameResult) !void {
@@ -341,19 +381,58 @@ pub fn main() !void {
     var results = std.ArrayList(GameResult).init(allocator);
     defer results.deinit();
 
-    var player = Player.init(
-        config.starting_bankroll,
-        config.table_minimum,
-        config.betting_strategy,
-    );
+    const num_threads = @min(4, config.attempts);
+    var tasks = std.ArrayList(WorkerTask).init(allocator);
+    defer tasks.deinit();
 
+    var worker_results = std.ArrayList(WorkerResult).init(allocator);
+    defer worker_results.deinit();
+
+    var mutex = std.Thread.Mutex{};
+
+    // Create tasks for all simulations
     for (0..config.attempts) |attempt| {
-        print("Running simulation attempt {}/{}\n", .{ attempt + 1, config.attempts });
-        const result = try runSimulation(allocator, config, &player, attempt);
-        try results.append(result);
+        try tasks.append(WorkerTask{
+            .allocator = allocator,
+            .config = config,
+            .sim_number = attempt,
+        });
     }
 
-    print("{} simulations complete.\n", .{config.attempts});
+    print("Running {} simulations across {} threads\n", .{ config.attempts, num_threads });
+
+    const start_time = std.time.nanoTimestamp();
+
+    // Launch worker threads
+    var threads = std.ArrayList(std.Thread).init(allocator);
+    defer threads.deinit();
+
+    for (0..num_threads) |_| {
+        const thread = try std.Thread.spawn(.{}, workerThread, .{ allocator, &tasks, &worker_results, &mutex });
+        try threads.append(thread);
+    }
+
+    // Wait for all threads to complete
+    for (threads.items) |thread| {
+        thread.join();
+    }
+
+    // Sort results by simulation number to maintain order
+    std.sort.pdq(WorkerResult, worker_results.items, {}, struct {
+        fn lessThan(_: void, a: WorkerResult, b: WorkerResult) bool {
+            return a.sim_number < b.sim_number;
+        }
+    }.lessThan);
+
+    // Extract sorted results
+    for (worker_results.items) |worker_result| {
+        try results.append(worker_result.result);
+    }
+
+    const elapsed_ns = std.time.nanoTimestamp() - start_time;
+    const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
+
+    print("{} parallel simulations complete in {d:.2}ms\n", .{ config.attempts, elapsed_ms });
 
     try writeResultsToCSV(results.items);
 }
