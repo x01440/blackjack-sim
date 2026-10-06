@@ -5,6 +5,16 @@ pub const BettingStrategy = enum {
     increase_after_win,
     high_increase_after_win,
     random,
+
+    /// The command line name for this strategy (as passed to --strategy).
+    pub fn name(self: BettingStrategy) []const u8 {
+        return switch (self) {
+            .flat => "flat",
+            .increase_after_win => "increase",
+            .high_increase_after_win => "high_increase",
+            .random => "random",
+        };
+    }
 };
 
 pub const Player = struct {
