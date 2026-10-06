@@ -26,20 +26,52 @@ Or build and run in one step, passing arguments after `--`:
 ```sh
 zig build run -- --hands 1000 --strategy random
 ```
-Use `--help` to see all options. Per-simulation results are written to `data-out/simulation_results.csv`.
+Use `--help` to see all options. Per-simulation results are written to `data-out/simulation_results.csv` (see [Output CSV](#output-csv)).
 
 ## Command Line Parameters
 
-- `--hands <number>`: Specifies the number of blackjack hands to play in each simulation attempt.
-- `--attempts <number>`: Sets how many times to run the entire simulation (each with the specified number of hands).
-- `--decks <number>`: (If implemented) Sets the number of decks to use in the shoe.
-- `--bet <amount>`: (If implemented) Sets the base bet amount for each hand.
-- `--strategy [flat|increase|high_increase|random]`: Sets the betting strategy based on the built in betting strategy.
+Required:
+- `--hands <number>`: Number of blackjack hands to play in each simulation attempt.
+
+Optional:
+- `--attempts <number>`: How many times to run the entire simulation, each with the specified number of hands (default: 1).
+- `--bankroll <amount>`: Starting bankroll (default: $1000).
+- `--minimum <amount>`: Table minimum bet; also the "unit" for the `random` strategy (default: $10).
+- `--spots <number>`: Maximum spots at the table (default: 5).
+- `--decks <2|6>`: Number of decks in the shoe (default: 6).
+- `--quit_threshold <amount>`: Stop a simulation when the bankroll reaches this amount (default: $2000).
+- `--strategy [flat|increase|high_increase|random]`: Betting strategy (default: `increase`).
   - `flat`: Always bet the table minimum.
   - `increase`: Increase the bet by the table minimum after each win; reset to the minimum when the streak ends.
   - `high_increase`: Double the bet after the first two wins, then increase by 50% per win; reset to the minimum when the streak ends.
   - `random`: Bet a random 1-8 units on every hand, where a unit is the table minimum (`--minimum`).
-- `--verbose`: (If implemented) Enables detailed output for each hand played.
+- `--seed <string>`: Seed for the random number generator, for repeatable results.
+- `--append`: Append this run's results to `data-out/simulation_results.csv` instead of replacing the file. The header row is only written when the file is new or empty. See [Output CSV](#output-csv).
+- `--help`: Show the help message.
+
+## Output CSV
+Each run writes one row per simulation attempt to `data-out/simulation_results.csv` with these columns:
+
+`simulation, betting_strategy, total_hands, player_wins, player_losses, ties, max_bet, winnings, final_bankroll, starting_bankroll, net_winnings, win_rate`
+
+- `betting_strategy` is the strategy name used for that run (`flat`, `increase`, `high_increase`, or `random`).
+- By default the file is replaced on every run. Pass `--append` to add rows to the existing file, e.g. to compare strategies in one CSV:
+  ```sh
+  ./zig-out/bin/blackjack-sim --hands 1000 --attempts 10 --strategy flat
+  ./zig-out/bin/blackjack-sim --hands 1000 --attempts 10 --strategy random --append
+  ```
+- `simulation` numbering restarts at 1 for each run.
+- If your existing CSV was created before the `betting_strategy` column was added, delete it (or run once without `--append`) so the columns line up.
+
+## Analyzing Results
+`scripts/analyze_results.py` (Python 3, standard library only) reads the results CSV and prints a Markdown table comparing every betting strategy in the file: how often a run reaches the quit target, goes broke, or plays all hands; average net result; median hands; and largest bet. With exactly two strategies it also reports whether the difference in reaching the target is statistically meaningful.
+
+```sh
+./zig-out/bin/blackjack-sim --hands 2000 --attempts 1000 --strategy increase
+./zig-out/bin/blackjack-sim --hands 2000 --attempts 1000 --strategy random --append
+python3 scripts/analyze_results.py
+```
+If you changed `--quit_threshold` or `--minimum`, pass the same values: `python3 scripts/analyze_results.py --target 3000 --minimum 25`. A different CSV path can be given as the first argument.
 
 ## Notes on Claude's mistakes
 - Player didn't actually play at first, Claude was instructed to load the basic strategy from CSV and use that strategy matrix to execute basic strategy. Claude missed that and I had to prompt it a couple of times to do this work.
@@ -52,3 +84,6 @@ Use `--help` to see all options. Per-simulation results are written to `data-out
 ## Sample command lines
 2000 hands, 2 attempts at the entire simulation
 `./zig-out/bin/blackjack-sim --hands 2000 --attempts 2`
+
+1000 hands, 10 attempts with random betting, adding the results to the existing CSV
+`./zig-out/bin/blackjack-sim --hands 1000 --attempts 10 --strategy random --append`

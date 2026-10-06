@@ -334,24 +334,32 @@ fn workerThread(_: std.mem.Allocator, tasks: *std.array_list.Managed(WorkerTask)
     }
 }
 
-fn writeResultsToCSV(results: []const GameResult) !void {
+fn writeResultsToCSV(results: []const GameResult, config: GameConfig) !void {
     std.fs.cwd().makeDir("data-out") catch |err| switch (err) {
         error.PathAlreadyExists => {},
         else => return err,
     };
 
-    const file = try std.fs.cwd().createFile("data-out/simulation_results.csv", .{});
+    const csv_path = "data-out/simulation_results.csv";
+
+    // When appending, keep the existing rows and only write the header for a new or empty file
+    const file = try std.fs.cwd().createFile(csv_path, .{ .truncate = !config.append_csv });
     defer file.close();
+    const write_header = (try file.getEndPos()) == 0;
+    try file.seekFromEnd(0);
 
     var buffer: [4096]u8 = undefined;
-    var file_writer = file.writer(&buffer);
+    var file_writer = file.writerStreaming(&buffer);
     const writer = &file_writer.interface;
 
-    try writer.writeAll("simulation,total_hands,player_wins,player_losses,ties,max_bet,winnings,final_bankroll,starting_bankroll,net_winnings,win_rate\n");
+    if (write_header) {
+        try writer.writeAll("simulation,betting_strategy,total_hands,player_wins,player_losses,ties,max_bet,winnings,final_bankroll,starting_bankroll,net_winnings,win_rate\n");
+    }
 
     for (results, 0..) |result, i| {
-        try writer.print("{},{},{},{},{},{d:.2},{d:.2},{d:.2},{d:.2},{d:.2},{d:.4}\n", .{
+        try writer.print("{},{s},{},{},{},{},{d:.2},{d:.2},{d:.2},{d:.2},{d:.2},{d:.4}\n", .{
             i + 1,
+            config.betting_strategy.name(),
             result.total_hands,
             result.player_wins,
             result.player_losses,
@@ -366,7 +374,8 @@ fn writeResultsToCSV(results: []const GameResult) !void {
     }
     try writer.flush();
 
-    print("Results written to data-out/simulation_results.csv\n", .{});
+    const action = if (config.append_csv) "appended to" else "written to";
+    print("Results {s} " ++ csv_path ++ "\n", .{action});
 }
 
 pub fn main() !void {
@@ -468,5 +477,5 @@ pub fn main() !void {
     print("Total losses: {} ({d:.1}%)\n", .{ total_losses, loss_percentage });
     print("Total pushes: {}\n\n", .{total_pushes});
 
-    try writeResultsToCSV(results.items);
+    try writeResultsToCSV(results.items, config);
 }

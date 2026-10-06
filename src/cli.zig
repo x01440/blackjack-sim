@@ -13,6 +13,7 @@ pub const GameConfig = struct {
     quit_threshold: f64 = GameConstants.quit_threshold,
     betting_strategy: BettingStrategy = .increase_after_win,
     seed: ?[]const u8 = null,
+    append_csv: bool = false,
 };
 
 pub fn printHelp() void {
@@ -30,13 +31,15 @@ pub fn printHelp() void {
         "(default: ${d:.2})\n", .{GameConstants.quit_threshold});
     print("  --strategy <strategy>  Betting strategy (default: increase)\n", .{});
     print("  --seed <string>        Seed for random number generation (optional)\n", .{});
+    print("  --append               Append results to the CSV instead of replacing it\n", .{});
     print("  --help                 Show this help message\n\n", .{});
     print("Betting strategies:\n", .{});
     print("  flat                   Always bet table minimum\n", .{});
-    print("  increase               Increase bet by 50%% of table minimum after win\n", .{});
-    print("                         (rounded up to nearest $5)\n", .{});
-    print("  high_increase          Double bet after first two wins, then increase\n", .{});
-    print("                         by table minimum for each subsequent win\n", .{});
+    print("  increase               Increase bet by table minimum after each win;\n", .{});
+    print("                         reset to table minimum when the streak ends\n", .{});
+    print("  high_increase          Double bet after each of the first two wins, then\n", .{});
+    print("                         increase by 50% of the bet for each subsequent win;\n", .{});
+    print("                         reset to table minimum when the streak ends\n", .{});
     print("  random                 Bet a random 1-8 units each hand, where a unit\n", .{});
     print("                         is the table minimum\n", .{});
 }
@@ -111,6 +114,8 @@ pub fn parseArgs() !GameConfig {
                     std.process.exit(1);
                 }
             }
+        } else if (std.mem.eql(u8, arg, "--append")) {
+            config.append_csv = true;
         } else if (std.mem.eql(u8, arg, "--seed")) {
             if (args.next()) |seed_str| {
                 config.seed = seed_str;
