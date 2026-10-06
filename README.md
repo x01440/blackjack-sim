@@ -2,13 +2,43 @@
 
 This is a blackjack simulator written in zig. For details about how it was constructed, refer to the `.claude/CLAUDE.md` file. This simulator was written with Claude.
 
+## Building and Running
+
+### Requirements
+- **Zig 0.15.x** (tested with 0.15.2). Older versions such as 0.14 will not build this project because the build and standard library APIs changed.
+  - On macOS with Homebrew: `brew install zig`
+  - Otherwise, download 0.15.2 for your platform from https://ziglang.org/download/, extract it, and add the extracted folder to your `PATH`.
+  - Check with `zig version`, which should print `0.15.x`.
+
+### Build
+From the project root:
+```sh
+zig build -Doptimize=ReleaseFast
+```
+This produces the executable at `./zig-out/bin/blackjack-sim`. Omit `-Doptimize=ReleaseFast` for a debug build.
+
+### Run
+Run the simulator from the project root, since it loads `strategies/basic_strategy.csv` with a relative path:
+```sh
+./zig-out/bin/blackjack-sim --hands 1000 --strategy random
+```
+Or build and run in one step, passing arguments after `--`:
+```sh
+zig build run -- --hands 1000 --strategy random
+```
+Use `--help` to see all options. Per-simulation results are written to `data-out/simulation_results.csv`.
+
 ## Command Line Parameters
 
 - `--hands <number>`: Specifies the number of blackjack hands to play in each simulation attempt.
 - `--attempts <number>`: Sets how many times to run the entire simulation (each with the specified number of hands).
 - `--decks <number>`: (If implemented) Sets the number of decks to use in the shoe.
 - `--bet <amount>`: (If implemented) Sets the base bet amount for each hand.
-- `--strategy [flat|increase|high_increase]`: (If implemented) Sets the betting strategy based on the built in betting strategy.
+- `--strategy [flat|increase|high_increase|random]`: Sets the betting strategy based on the built in betting strategy.
+  - `flat`: Always bet the table minimum.
+  - `increase`: Increase the bet by the table minimum after each win; reset to the minimum when the streak ends.
+  - `high_increase`: Double the bet after the first two wins, then increase by 50% per win; reset to the minimum when the streak ends.
+  - `random`: Bet a random 1-8 units on every hand, where a unit is the table minimum (`--minimum`).
 - `--verbose`: (If implemented) Enables detailed output for each hand played.
 
 ## Notes on Claude's mistakes

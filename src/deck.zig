@@ -2,7 +2,7 @@ const std = @import("std");
 const Card = @import("card.zig").Card;
 
 pub const Deck = struct {
-    cards: std.ArrayList(Card),
+    cards: std.array_list.Managed(Card),
     num_decks: u8 = 6,
     shuffle_point: usize,
     rng: std.Random.DefaultPrng,
@@ -10,7 +10,7 @@ pub const Deck = struct {
     pub fn init(allocator: std.mem.Allocator, num_decks: u8) !Deck {
         var deck = Deck{
             .num_decks = num_decks,
-            .cards = std.ArrayList(Card).init(allocator),
+            .cards = std.array_list.Managed(Card).init(allocator),
             .shuffle_point = 0,
             .rng = std.Random.DefaultPrng.init(@intCast(std.time.timestamp())),
         };

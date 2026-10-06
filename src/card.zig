@@ -16,22 +16,22 @@ pub const Card = struct {
 };
 
 pub const Hand = struct {
-    hands: std.ArrayList(std.ArrayList(Card)),
-    split_flags: std.ArrayList(bool),
-    double_flags: std.ArrayList(bool),
-    bets: std.ArrayList(f64),
+    hands: std.array_list.Managed(std.array_list.Managed(Card)),
+    split_flags: std.array_list.Managed(bool),
+    double_flags: std.array_list.Managed(bool),
+    bets: std.array_list.Managed(f64),
     allocator: std.mem.Allocator,
 
     pub fn init(allocator: std.mem.Allocator, initial_bet: f64) Hand {
         var hand = Hand{
-            .hands = std.ArrayList(std.ArrayList(Card)).init(allocator),
-            .split_flags = std.ArrayList(bool).init(allocator),
-            .double_flags = std.ArrayList(bool).init(allocator),
-            .bets = std.ArrayList(f64).init(allocator),
+            .hands = std.array_list.Managed(std.array_list.Managed(Card)).init(allocator),
+            .split_flags = std.array_list.Managed(bool).init(allocator),
+            .double_flags = std.array_list.Managed(bool).init(allocator),
+            .bets = std.array_list.Managed(f64).init(allocator),
             .allocator = allocator,
         };
         // Start with one hand
-        hand.hands.append(std.ArrayList(Card).init(allocator)) catch unreachable;
+        hand.hands.append(std.array_list.Managed(Card).init(allocator)) catch unreachable;
         hand.split_flags.append(false) catch unreachable;
         hand.double_flags.append(false) catch unreachable;
         hand.bets.append(initial_bet) catch unreachable;
@@ -52,7 +52,7 @@ pub const Hand = struct {
         return self.hands.items.len;
     }
     
-    pub fn getHand(self: *Hand, index: usize) ?*std.ArrayList(Card) {
+    pub fn getHand(self: *Hand, index: usize) ?*std.array_list.Managed(Card) {
         if (index >= self.hands.items.len) return null;
         return &self.hands.items[index];
     }
@@ -71,7 +71,7 @@ pub const Hand = struct {
         var original_hand = &self.hands.items[hand_index];
         
         // Create new hand and move second card
-        var new_hand = std.ArrayList(Card).init(self.allocator);
+        var new_hand = std.array_list.Managed(Card).init(self.allocator);
         const second_card = original_hand.pop() orelse return error.CannotSplit;
         try new_hand.append(second_card);
         
