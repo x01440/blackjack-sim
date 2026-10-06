@@ -81,6 +81,8 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, sim_number: u
             }
         }
 
+        player.prepareBet(deck.rng.random());
+
         if (player.bankroll < player.bet) {
             player.bet = player.bankroll;
         }
@@ -310,7 +312,7 @@ fn runSimulation(allocator: std.mem.Allocator, config: GameConfig, sim_number: u
     );
 }
 
-fn workerThread(_: std.mem.Allocator, tasks: *std.ArrayList(WorkerTask), results: *std.ArrayList(WorkerResult), mutex: *std.Thread.Mutex) !void {
+fn workerThread(_: std.mem.Allocator, tasks: *std.array_list.Managed(WorkerTask), results: *std.array_list.Managed(WorkerResult), mutex: *std.Thread.Mutex) !void {
     while (true) {
         mutex.lock();
         const maybe_task = if (tasks.items.len > 0) tasks.orderedRemove(0) else null;
@@ -341,7 +343,9 @@ fn writeResultsToCSV(results: []const GameResult) !void {
     const file = try std.fs.cwd().createFile("data-out/simulation_results.csv", .{});
     defer file.close();
 
-    const writer = file.writer();
+    var buffer: [4096]u8 = undefined;
+    var file_writer = file.writer(&buffer);
+    const writer = &file_writer.interface;
 
     try writer.writeAll("simulation,total_hands,player_wins,player_losses,ties,max_bet,winnings,final_bankroll,starting_bankroll,net_winnings,win_rate\n");
 
@@ -360,6 +364,7 @@ fn writeResultsToCSV(results: []const GameResult) !void {
             result.getWinRate(),
         });
     }
+    try writer.flush();
 
     print("Results written to data-out/simulation_results.csv\n", .{});
 }
@@ -378,14 +383,14 @@ pub fn main() !void {
     print("Number of decks: {}\n", .{config.num_decks});
     print("\n", .{});
 
-    var results = std.ArrayList(GameResult).init(allocator);
+    var results = std.array_list.Managed(GameResult).init(allocator);
     defer results.deinit();
 
     const num_threads = @min(4, config.attempts);
-    var tasks = std.ArrayList(WorkerTask).init(allocator);
+    var tasks = std.array_list.Managed(WorkerTask).init(allocator);
     defer tasks.deinit();
 
-    var worker_results = std.ArrayList(WorkerResult).init(allocator);
+    var worker_results = std.array_list.Managed(WorkerResult).init(allocator);
     defer worker_results.deinit();
 
     var mutex = std.Thread.Mutex{};
@@ -404,7 +409,7 @@ pub fn main() !void {
     const start_time = std.time.nanoTimestamp();
 
     // Launch worker threads
-    var threads = std.ArrayList(std.Thread).init(allocator);
+    var threads = std.array_list.Managed(std.Thread).init(allocator);
     defer threads.deinit();
 
     for (0..num_threads) |_| {
@@ -433,6 +438,35 @@ pub fn main() !void {
     const elapsed_ms = @as(f64, @floatFromInt(elapsed_ns)) / 1_000_000.0;
 
     print("{} parallel simulations complete in {d:.2}ms\n", .{ config.attempts, elapsed_ms });
+
+    // Calculate and display aggregate statistics
+    var total_hands: u32 = 0;
+    var total_wins: u32 = 0;
+    var total_losses: u32 = 0;
+    var total_pushes: u32 = 0;
+
+    for (results.items) |result| {
+        total_hands += result.total_hands;
+        total_wins += result.player_wins;
+        total_losses += result.player_losses;
+        total_pushes += result.ties;
+    }
+
+    const win_percentage = if (total_hands > 0)
+        (@as(f64, @floatFromInt(total_wins)) / @as(f64, @floatFromInt(total_hands))) * 100.0
+    else
+        0.0;
+
+    const loss_percentage = if (total_hands > 0)
+        (@as(f64, @floatFromInt(total_losses)) / @as(f64, @floatFromInt(total_hands))) * 100.0
+    else
+        0.0;
+
+    print("\n=== Summary Statistics ===\n", .{});
+    print("Total hands played: {}\n", .{total_hands});
+    print("Total wins: {} ({d:.1}%)\n", .{ total_wins, win_percentage });
+    print("Total losses: {} ({d:.1}%)\n", .{ total_losses, loss_percentage });
+    print("Total pushes: {}\n\n", .{total_pushes});
 
     try writeResultsToCSV(results.items);
 }

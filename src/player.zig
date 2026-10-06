@@ -4,6 +4,7 @@ pub const BettingStrategy = enum {
     flat,
     increase_after_win,
     high_increase_after_win,
+    random,
 };
 
 pub const Player = struct {
@@ -45,6 +46,16 @@ pub const Player = struct {
                     self.bet += rounded_increase;
                 }
             },
+            .random => {},
+        }
+    }
+
+    /// Sets the bet for the upcoming hand. Only the random strategy changes
+    /// the bet here: 1-8 units, where a unit is the table minimum.
+    pub fn prepareBet(self: *Player, rng: std.Random) void {
+        if (self.betting_strategy == .random) {
+            const units = rng.intRangeAtMost(u32, 1, 8);
+            self.bet = self.table_minimum * @as(f64, @floatFromInt(units));
         }
     }
 

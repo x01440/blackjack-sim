@@ -37,6 +37,8 @@ pub fn printHelp() void {
     print("                         (rounded up to nearest $5)\n", .{});
     print("  high_increase          Double bet after first two wins, then increase\n", .{});
     print("                         by table minimum for each subsequent win\n", .{});
+    print("  random                 Bet a random 1-8 units each hand, where a unit\n", .{});
+    print("                         is the table minimum\n", .{});
 }
 
 pub fn parseArgs() !GameConfig {
@@ -102,6 +104,8 @@ pub fn parseArgs() !GameConfig {
                     config.betting_strategy = .increase_after_win;
                 } else if (std.mem.eql(u8, strategy_str, "high_increase")) {
                     config.betting_strategy = .high_increase_after_win;
+                } else if (std.mem.eql(u8, strategy_str, "random")) {
+                    config.betting_strategy = .random;
                 } else {
                     print("Error: Unknown betting strategy '{s}'\n", .{strategy_str});
                     std.process.exit(1);
